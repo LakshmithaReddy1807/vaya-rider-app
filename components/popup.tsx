@@ -1,38 +1,36 @@
-"use client"
+import React from "react"
 
-import { X } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogClose
-} from "@/components/ui/dialog"
-import type { ReactNode } from "react"
-
-interface PopUpProps {
+interface DriverMessagePopupProps {
   title: string
   isOpen: boolean
   onClose: () => void
-  children: ReactNode
+  children: React.ReactNode
 }
 
-export default function DriverMessagePopup({ title, isOpen, onClose, children }: PopUpProps) {
+const DriverMessagePopup: React.FC<DriverMessagePopupProps> = ({
+  title,
+  isOpen,
+  onClose,
+  children,
+}) => {
+  if (!isOpen) return null
+
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="border-black sm:max-w-md">
-        <DialogHeader className="flex flex-row items-center justify-between">
-          <DialogTitle>{title}</DialogTitle>
-          <DialogClose asChild>
-            <Button variant="ghost" size="icon">
-              <X className="h-4 w-4" />
-              <span className="sr-only">Close</span>
-            </Button>
-          </DialogClose>
-        </DialogHeader>
-        <div>{children}</div>
-      </DialogContent>
-    </Dialog>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+      <div className="w-full max-w-sm rounded-lg border-2 border-black bg-white p-4 shadow-lg">
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-lg font-semibold">{title}</h3>
+          <button
+            onClick={onClose}
+            className="text-xl font-bold text-gray-600 hover:text-red-500 focus:outline-none"
+          >
+            &times;
+          </button>
+        </div>
+        <div className="text-sm">{children}</div>
+      </div>
+    </div>
   )
 }
+
+export default DriverMessagePopup
