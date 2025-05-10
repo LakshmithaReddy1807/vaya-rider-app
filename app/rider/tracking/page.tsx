@@ -9,6 +9,7 @@ import { Phone, MessageSquare } from 'lucide-react'
 import HamburgerMenu from '@/components/hamburgerMenu'
 import ShareIcon from '@/components/shareIcon'
 import { useTranslation } from '@/utils/i18n'
+import { GoogleMap, MarkerF, DirectionsRenderer, useJsApiLoader } from '@react-google-maps/api'
 
 // Mock driver data
 const driverData = {
@@ -21,10 +22,21 @@ const driverData = {
   image: '/placeholder.svg?height=100&width=100',
 }
 
+const containerStyle = {
+  width: '100%',
+  height: '100%',
+}
+
 export default function TrackingPage() {
   const router = useRouter()
   const { t } = useTranslation()
   const [timeLeft, setTimeLeft] = useState(20)
+  const [position, setPosition] = useState<{ lat: number; lng: number } | null>(null)
+  const [driverPosition, setDriverPosition] = useState<{ lat: number; lng: number }>({ lat: 17.385044, lng: 78.486671 })
+
+  const { isLoaded } = useJsApiLoader({
+    googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY!,
+  })
 
   useEffect(() => {
     if (timeLeft <= 0) {
@@ -33,60 +45,39 @@ export default function TrackingPage() {
     }
 
     const timer = setTimeout(() => {
-      setTimeLeft(timeLeft - 1)
+      setTimeLeft((prev) => prev - 1)
     }, 1000)
 
     return () => clearTimeout(timer)
   }, [timeLeft, router])
 
-  // Google Maps + Geolocation
   useEffect(() => {
-    const loadMapScript = () => {
-      const existingScript = document.getElementById('google-maps-script')
-      if (!existingScript) {
-        const script = document.createElement('script')
-        script.id = 'google-maps-script'
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=places`
-        script.async = true
-        script.defer = true
-        script.onload = () => {
-          // Script loaded, now initialize the map
-          initMap()
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setPosition({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          })
+        },
+        () => {
+          console.warn('Geolocation permission denied or not available.')
+          setPosition({ lat: 17.385044, lng: 78.486671 }) // fallback to Hyderabad
         }
-        document.head.appendChild(script)
-      } else {
-        // If the script is already added, initialize the map
-        initMap()
-      }
+      )
     }
+  }, [])
 
-    const initMap = () => {
-      // Ensure google object is available
-      if (typeof google !== 'undefined' && google.maps) {
-        const map = new google.maps.Map(document.getElementById('map') as HTMLElement, {
-          center: { lat: 17.385044, lng: 78.486671 }, // Default center (e.g. Hyderabad)
-          zoom: 15,
-        })
+  // Simulate driver movement (randomly within 0.01 latitude and longitude)
+  useEffect(() => {
+    const driverMovementInterval = setInterval(() => {
+      setDriverPosition((prev) => ({
+        lat: prev.lat + (Math.random() - 0.5) * 0.01, // Random change within range
+        lng: prev.lng + (Math.random() - 0.5) * 0.01,
+      }))
+    }, 3000)
 
-        if (navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(
-            (position) => {
-              const pos = {
-                lat: position.coords.latitude,
-                lng: position.coords.longitude,
-              }
-              map.setCenter(pos)
-              new google.maps.Marker({ position: pos, map })
-            },
-            () => {
-              console.warn('Geolocation permission denied or not available.')
-            }
-          )
-        }
-      }
-    }
-
-    loadMapScript()
+    return () => clearInterval(driverMovementInterval)
   }, [])
 
   return (
@@ -98,8 +89,20 @@ export default function TrackingPage() {
       </header>
 
       <main className="flex-1 p-4">
-        <div className="relative mb-6 h-64 w-full rounded-lg overflow-hidden border" id="map-container">
-          <div id="map" className="h-full w-full" />
+        <div className="relative mb-6 h-64 w-full rounded-lg overflow-hidden border">
+          {isLoaded && position && (
+            <GoogleMap
+              mapContainerStyle={containerStyle}
+              center={position}
+              zoom={13}
+            >
+              {/* Driver's current position */}
+              <MarkerF position={driverPosition} label="Driver" />
+
+              {/* Pickup and Drop markers + route */}
+              <DirectionsRendererWithMarkers />
+            </GoogleMap>
+          )}
         </div>
 
         <Card className="border-black">
@@ -107,7 +110,7 @@ export default function TrackingPage() {
             <div className="flex items-center space-x-4">
               <div className="relative h-16 w-16 overflow-hidden rounded-full">
                 <Image
-                  src={driverData.image || '/placeholder.svg'}
+                  src={driverData.image}
                   alt={driverData.name}
                   fill
                   className="object-cover"
@@ -159,65 +162,141 @@ export default function TrackingPage() {
   )
 }
 
+// Directions with Pickup and Drop markers
+function DirectionsRendererWithMarkers() {
+  const [directions, setDirections] = useState<google.maps.DirectionsResult | null>(null)
+
+  const pickup = localStorage.getItem('pickupLocation') || ''
+  const dropoff = localStorage.getItem('dropoffLocation') || ''
+
+  useEffect(() => {
+    if (!pickup || !dropoff) return
+
+    const geocoder = new google.maps.Geocoder()
+    const directionsService = new google.maps.DirectionsService()
+
+    geocoder.geocode({ address: pickup }, (pickupResults, pickupStatus) => {
+      if (pickupStatus === 'OK' && pickupResults[0]) {
+        const pickupLatLng = pickupResults[0].geometry.location
+
+        geocoder.geocode({ address: dropoff }, (dropoffResults, dropoffStatus) => {
+          if (dropoffStatus === 'OK' && dropoffResults[0]) {
+            const dropoffLatLng = dropoffResults[0].geometry.location
+
+            directionsService.route(
+              {
+                origin: pickupLatLng,
+                destination: dropoffLatLng,
+                travelMode: google.maps.TravelMode.DRIVING,
+              },
+              (result, status) => {
+                if (status === 'OK' && result) {
+                  setDirections(result)
+                }
+              }
+            )
+          }
+        })
+      }
+    })
+  }, [pickup, dropoff])
+
+  return (
+    <>
+      {directions && <DirectionsRenderer directions={directions} />}
+    </>
+  )
+}
 
 
+// 'use client'
 
-
-// "use client"
-
-// import { useEffect, useState } from "react"
-// import { useRouter } from "next/navigation"
-// import Image from "next/image"
-// import { Button } from "@/components/ui/button"
-// import { Card, CardContent } from "@/components/ui/card"
-// import { Phone, MessageSquare } from "lucide-react"
-// import HamburgerMenu from "@/components/hamburgerMenu"
-// import ShareIcon from "@/components/shareIcon"
-// import { useTranslation } from "@/utils/i18n"
+// import { useEffect, useState } from 'react'
+// import { useRouter } from 'next/navigation'
+// import Image from 'next/image'
+// import { Button } from '@/components/ui/button'
+// import { Card, CardContent } from '@/components/ui/card'
+// import { Phone, MessageSquare } from 'lucide-react'
+// import HamburgerMenu from '@/components/hamburgerMenu'
+// import ShareIcon from '@/components/shareIcon'
+// import { useTranslation } from '@/utils/i18n'
+// import { GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api'
 
 // // Mock driver data
 // const driverData = {
-//   name: "Rahul Singh",
-//   vehicleNumber: "DL 5S AB 1234",
+//   name: 'Rahul Singh',
+//   vehicleNumber: 'DL 5S AB 1234',
 //   rating: 4.8,
-//   phone: "+91 98765 43210",
-//   vehicleType: "Car",
-//   otp: "1234",
-//   image: "/placeholder.svg?height=100&width=100",
+//   phone: '+91 98765 43210',
+//   vehicleType: 'Car',
+//   otp: '1234',
+//   image: '/placeholder.svg?height=100&width=100',
+// }
+
+// const containerStyle = {
+//   width: '100%',
+//   height: '100%',
 // }
 
 // export default function TrackingPage() {
 //   const router = useRouter()
 //   const { t } = useTranslation()
 //   const [timeLeft, setTimeLeft] = useState(20)
+//   const [position, setPosition] = useState<{ lat: number; lng: number } | null>(null)
+
+//   const { isLoaded } = useJsApiLoader({
+//     googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY!,
+//   })
 
 //   useEffect(() => {
 //     if (timeLeft <= 0) {
-//       router.push("/rider/startRide")
+//       router.push('/rider/startRide')
 //       return
 //     }
 
 //     const timer = setTimeout(() => {
-//       setTimeLeft(timeLeft - 1)
+//       setTimeLeft((prev) => prev - 1)
 //     }, 1000)
 
 //     return () => clearTimeout(timer)
 //   }, [timeLeft, router])
 
+//   useEffect(() => {
+//     if (navigator.geolocation) {
+//       navigator.geolocation.getCurrentPosition(
+//         (pos) => {
+//           setPosition({
+//             lat: pos.coords.latitude,
+//             lng: pos.coords.longitude,
+//           })
+//         },
+//         () => {
+//           console.warn('Geolocation permission denied or not available.')
+//           setPosition({ lat: 17.385044, lng: 78.486671 }) // fallback to Hyderabad
+//         }
+//       )
+//     }
+//   }, [])
+
 //   return (
 //     <div className="flex min-h-screen flex-col bg-white">
 //       <header className="flex items-center justify-between border-b border-gray-200 p-4">
 //         <HamburgerMenu />
-//         <h1 className="text-xl font-bold">{t("tracking.title")}</h1>
+//         <h1 className="text-xl font-bold">{t('tracking.title')}</h1>
 //         <ShareIcon />
 //       </header>
 
 //       <main className="flex-1 p-4">
-//         <div className="relative mb-6 h-64 w-full rounded-lg bg-gray-200">
-//           {/* This would be replaced with an actual map integration */}
-//           <div className="flex h-full items-center justify-center">
-//             <p className="text-gray-500">{t("tracking.mapPlaceholder")}</p>
-//           </div>
+//         <div className="relative mb-6 h-64 w-full rounded-lg overflow-hidden border">
+//           {isLoaded && position && (
+//             <GoogleMap
+//               mapContainerStyle={containerStyle}
+//               center={position}
+//               zoom={15}
+//             >
+//               <Marker position={position} />
+//             </GoogleMap>
+//           )}
 //         </div>
 
 //         <Card className="border-black">
@@ -225,7 +304,7 @@ export default function TrackingPage() {
 //             <div className="flex items-center space-x-4">
 //               <div className="relative h-16 w-16 overflow-hidden rounded-full">
 //                 <Image
-//                   src={driverData.image || "/placeholder.svg"}
+//                   src={driverData.image}
 //                   alt={driverData.name}
 //                   fill
 //                   className="object-cover"
@@ -251,22 +330,23 @@ export default function TrackingPage() {
 //             </div>
 
 //             <div className="mt-4 rounded-lg bg-gray-100 p-3">
-//               <p className="text-sm font-medium">{t("tracking.shareOtp")}</p>
+//               <p className="text-sm font-medium">{t('tracking.shareOtp')}</p>
 //               <div className="mt-1 flex items-center justify-between">
 //                 <div className="text-2xl font-bold tracking-wider">{driverData.otp}</div>
 //                 <p className="text-sm text-gray-600">
-//                   {t("tracking.arriving")}: {timeLeft}s
+//                   {t('tracking.arriving')}: {timeLeft}s
 //                 </p>
 //               </div>
 //             </div>
 
 //             <div className="mt-4 space-y-2 text-sm">
 //               <div>
-//                 <span className="font-medium">{t("tracking.from")}:</span>{" "}
-//                 {localStorage.getItem("pickupLocation") || ""}
+//                 <span className="font-medium">{t('tracking.from')}:</span>{' '}
+//                 {localStorage.getItem('pickupLocation') || ''}
 //               </div>
 //               <div>
-//                 <span className="font-medium">{t("tracking.to")}:</span> {localStorage.getItem("dropoffLocation") || ""}
+//                 <span className="font-medium">{t('tracking.to')}:</span>{' '}
+//                 {localStorage.getItem('dropoffLocation') || ''}
 //               </div>
 //             </div>
 //           </CardContent>
@@ -275,3 +355,9 @@ export default function TrackingPage() {
 //     </div>
 //   )
 // }
+
+
+
+
+
+
